@@ -146,3 +146,64 @@ func TestParseCacheExportIgnoreError(t *testing.T) {
 		})
 	}
 }
+
+func TestTranslateLegacySolveRequest(t *testing.T) {
+	t.Run("prevents duplicate cache exports", func(t *testing.T) {
+		req := &controlapi.SolveRequest{
+			Cache: &controlapi.CacheOptions{
+				ExportRefDeprecated: "example.com/cache:latest",
+				Exports: []*controlapi.CacheOptionsEntry{
+					{
+						Type:  "registry",
+						Attrs: map[string]string{"ref": "example.com/cache:latest"},
+					},
+				},
+			},
+		}
+
+		translateLegacySolveRequest(req)
+
+		// Should not add duplicate entry
+		require.Len(t, req.Cache.Exports, 1)
+		require.Equal(t, "example.com/cache:latest", req.Cache.Exports[0].Attrs["ref"])
+	})
+
+	t.Run("prevents duplicate cache imports", func(t *testing.T) {
+		req := &controlapi.SolveRequest{
+			Cache: &controlapi.CacheOptions{
+				ImportRefsDeprecated: []string{"example.com/cache:v1", "example.com/cache:v1"},
+				Imports: []*controlapi.CacheOptionsEntry{
+					{
+						Type:  "registry",
+						Attrs: map[string]string{"ref": "example.com/cache:v1"},
+					},
+				},
+			},
+		}
+
+		translateLegacySolveRequest(req)
+
+		// Should only have one entry for each unique ref
+		require.Len(t, req.Cache.Imports, 1)
+		require.Equal(t, "example.com/cache:v1", req.Cache.Imports[0].Attrs["ref"])
+	})
+
+	t.Run("allows different cache refs", func(t *testing.T) {
+		req := &controlapi.SolveRequest{
+			Cache: &controlapi.CacheOptions{
+				ExportRefDeprecated: "example.com/cache:v2",
+				Exports: []*controlapi.CacheOptionsEntry{
+					{
+						Type:  "registry",
+						Attrs: map[string]string{"ref": "example.com/cache:v1"},
+					},
+				},
+			},
+		}
+
+		translateLegacySolveRequest(req)
+
+		// Should have both entries since they're different
+		require.Len(t, req.Cache.Exports, 2)
+	})
+}

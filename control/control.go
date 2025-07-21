@@ -128,7 +128,7 @@ func NewController(opt Opt) (*Controller, error) {
 	}
 	c.throttledGC = throttle.After(time.Minute, c.gc)
 	// use longer interval for releaseUnreferencedCache deleting links quickly is less important
-	c.throttledReleaseUnreferenced = throttle.After(5*time.Minute, func() { c.releaseUnreferencedCache(context.TODO()) })
+	c.throttledReleaseUnreferenced = throttle.After(5*time.Minute, func() { c.releaseUnreferencedCache(context.Background()) })
 
 	defer func() {
 		time.AfterFunc(time.Second, c.throttledGC)
@@ -333,6 +333,25 @@ func (c *Controller) UpdateBuildHistory(ctx context.Context, req *controlapi.Upd
 	return &controlapi.UpdateBuildHistoryResponse{}, err
 }
 
+// cacheOptionsEntryExists checks if a cache options entry already exists in the slice
+func cacheOptionsEntryExists(entries []*controlapi.CacheOptionsEntry, target *controlapi.CacheOptionsEntry) bool {
+	targetKey, err := cacheOptKey(target)
+	if err != nil {
+		return false // If we can't get a key, assume it doesn't exist to be safe
+	}
+	
+	for _, entry := range entries {
+		entryKey, err := cacheOptKey(entry)
+		if err != nil {
+			continue
+		}
+		if entryKey == targetKey {
+			return true
+		}
+	}
+	return false
+}
+
 func translateLegacySolveRequest(req *controlapi.SolveRequest) {
 	// translates ExportRef and ExportAttrs to new Exports (v0.4.0)
 	if legacyExportRef := req.Cache.ExportRefDeprecated; legacyExportRef != "" {
@@ -344,8 +363,10 @@ func translateLegacySolveRequest(req *controlapi.SolveRequest) {
 			ex.Attrs = make(map[string]string)
 		}
 		ex.Attrs["ref"] = legacyExportRef
-		// FIXME(AkihiroSuda): skip append if already exists
-		req.Cache.Exports = append(req.Cache.Exports, ex)
+		// skip append if already exists
+		if !cacheOptionsEntryExists(req.Cache.Exports, ex) {
+			req.Cache.Exports = append(req.Cache.Exports, ex)
+		}
 		req.Cache.ExportRefDeprecated = ""
 		req.Cache.ExportAttrsDeprecated = nil
 	}
@@ -356,8 +377,10 @@ func translateLegacySolveRequest(req *controlapi.SolveRequest) {
 			Type:  "registry",
 			Attrs: map[string]string{"ref": legacyImportRef},
 		}
-		// FIXME(AkihiroSuda): skip append if already exists
-		req.Cache.Imports = append(req.Cache.Imports, im)
+		// skip append if already exists
+		if !cacheOptionsEntryExists(req.Cache.Imports, im) {
+			req.Cache.Imports = append(req.Cache.Imports, im)
+		}
 	}
 	req.Cache.ImportRefsDeprecated = nil
 
@@ -631,7 +654,7 @@ func (c *Controller) gc() {
 		return
 	}
 
-	eg, ctx := errgroup.WithContext(context.TODO())
+	eg, ctx := errgroup.WithContext(context.Background())
 
 	var size int64
 	ch := make(chan client.UsageInfo)
